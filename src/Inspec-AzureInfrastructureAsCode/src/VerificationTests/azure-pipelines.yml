@@ -1,0 +1,19 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+pool:
+  name: Inspec
+
+steps:
+  - task: Bash@3
+    displayName: "Run inspec tests"
+    inputs:
+      targetType: inline
+      script: |
+        sudo inspec version
+        sudo inspec exec . -t azure:// --chef-license=accept        

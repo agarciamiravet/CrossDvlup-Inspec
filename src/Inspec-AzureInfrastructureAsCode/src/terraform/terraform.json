@@ -1,0 +1,32 @@
+{
+  "database_server_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "pasionporlosbitsdbserver"
+  },
+  "resource_group_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "rg-crossdvlp-inspec"
+  },
+  "sql_database_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "pasionporlosbitsdatabase"
+  },
+  "storage_account_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "storpassionporlosbits"
+  },
+  "storage_container_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "images"
+  },
+  "web_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "pasiondebits"
+  }
+}

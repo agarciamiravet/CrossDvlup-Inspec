@@ -1,0 +1,283 @@
+trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+     - group: Inspec
+  
+stages:
+- stage: Build
+  jobs:
+  - job: Build
+    continueOnError: true
+    steps:
+    - task: DownloadSecureFile@1
+      name : "variables_tfvars"
+      inputs:
+        secureFile: 'variables.auto.tfvars'
+
+    - task: Bash@3
+      name : 'Tfvars_database'
+      inputs:
+        targetType: 'inline'
+        script: |
+          mv $(variables_tfvars.secureFilePath)  $(Build.SourcesDirectory)/src/terraform/variables.auto.tfvars
+          ls
+          chmod 775 variables.auto.tfvars
+        workingDirectory: '$(Build.SourcesDirectory)/src/terraform'
+
+    - task: TerraformInstaller@0
+      inputs:
+        terraformVersion: '0.12.20'
+    - task: TerraformTaskV1@0
+      name: terraform_init
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/src/terraform'
+        backendServiceArm: 'RecetasDevops-Sub01(ca00e31b-ed34-48f8-9b4e-10847c74d493)'
+        backendAzureRmResourceGroupName: 'rg-crossdvlup-inspec'
+        backendAzureRmStorageAccountName: 'storcrossdvlupinspec'
+        backendAzureRmContainerName: 'terraform-backend'
+        backendAzureRmKey: 'terraform-crossdvlup.tfstate'
+
+    - task: TerraformTaskV1@0
+      name : 'terraform_plan'
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/src/terraform'
+        commandOptions: '-var-file variables.auto.tfvars -out plan.tfplan -input=false'
+        environmentServiceNameAzureRM: 'RecetasDevops-Sub01(ca00e31b-ed34-48f8-9b4e-10847c74d493)'
+
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: 'ls'
+        workingDirectory: '$(Pipeline.Workspace)'
+    
+    - task: PublishPipelineArtifact@1
+      name : terraform_publish
+      inputs:
+        targetPath: '$(System.DefaultWorkingDirectory)/src/terraform'
+        artifact: 'drop'
+        publishLocation: 'pipeline'
+
+    - task: PublishPipelineArtifact@1
+      name : inspec_publish
+      inputs:
+        targetPath: '$(System.DefaultWorkingDirectory)/src/VerificationTests'
+        artifact: 'inspec'
+        publishLocation: 'pipeline'
+
+    - task: PublishPipelineArtifact@1
+      name : inspec_app_publish
+      inputs:
+        targetPath: '$(System.DefaultWorkingDirectory)/src/VerificationAppTests'
+        artifact: 'inspec_app'
+        publishLocation: 'pipeline'
+
+- stage: DeployInfrastucture
+
+  jobs:
+  - job: DeployTerraform
+    continueOnError: true
+    steps:
+    - task: TerraformInstaller@0
+      inputs:
+        terraformVersion: '0.12.20'
+    
+    - task: DownloadSecureFile@1
+      name : "variable_tfvars"
+      inputs:
+        secureFile: 'variables.auto.tfvars'
+
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        buildType: 'current'
+        artifactName: 'drop'
+        targetPath: '$(Pipeline.Workspace)'
+
+    - task: Bash@3
+      name : 'tfvars_variables'
+      inputs:
+        targetType: 'inline'
+        script: |
+          mv $(variable_tfvars.secureFilePath)  $(Pipeline.Workspace)/variables.auto.tfvars
+          chmod 775 variables.auto.tfvars
+          chmod -R 775 .terraform
+        workingDirectory: '$(Pipeline.Workspace)'
+
+    - task: TerraformTaskV1@0
+      name: terraform_init
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(Pipeline.Workspace)'
+        backendServiceArm: 'RecetasDevops-Sub01(ca00e31b-ed34-48f8-9b4e-10847c74d493)'
+        backendAzureRmResourceGroupName: 'rg-crossdvlup-inspec'
+        backendAzureRmStorageAccountName: 'storcrossdvlupinspec'
+        backendAzureRmContainerName: 'terraform-backend'
+        backendAzureRmKey: 'terraform-crossdvlup.tfstate'
+
+    - task: TerraformTaskV1@0
+      name: terraform_apply
+      inputs:
+        provider: 'azurerm'
+        command: 'apply'
+        workingDirectory: '$(Pipeline.Workspace)'
+        commandOptions: '-var-file=variables.auto.tfvars'
+        environmentServiceNameAzureRM: 'RecetasDevops-Sub01(ca00e31b-ed34-48f8-9b4e-10847c74d493)'
+           
+    - task: Bash@3
+      name: 'Terraform_output'
+      inputs:
+        targetType: 'inline'
+        script: |
+          terraform output
+          terraform output -json > terraform.json
+        workingDirectory: '$(Pipeline.Workspace)'
+    - task: PublishPipelineArtifact@1
+      name : terraform_output_publish
+      inputs:
+        targetPath: '$(Pipeline.Workspace)'
+        artifact: 'terraform_output'
+        publishLocation: 'pipeline'
+
+- stage: InspecTests
+  jobs:
+  - job: InspecTests
+    continueOnError: true
+    steps:
+    - task: DownloadPipelineArtifact@2
+      name: 'Download_Terraform_Output'
+      inputs:
+        buildType: 'current'
+        artifactName: 'terraform_output'
+        itemPattern: |
+          terraform.json
+        targetPath: '$(Pipeline.Workspace)'
+    - task: DownloadPipelineArtifact@2
+      name: 'Download_Inspec_Tests'
+      inputs:
+        buildType: 'current'
+        artifactName: 'inspec'
+        targetPath: '$(Pipeline.Workspace)'
+        
+    - task: Bash@3
+      name: 'Copy_Terraform_Json'
+      inputs:
+        targetType: 'inline'
+        script: |      
+          ls
+          mkdir files
+          mv terraform.json $(Pipeline.Workspace)/files
+        workingDirectory: '$(Pipeline.Workspace)'
+    - task: vsts-chef-task-install-inspec@1
+      name: 'Install_Inspec'
+      inputs:
+        chefInstallScriptDownloadURLLinux: 'https://omnitruck.chef.io/install.sh'
+
+    - task: Bash@3
+      displayName: "Run inspec tests"
+      continueOnError: true
+      inputs:
+        targetType: 'inline'
+        script: |
+          export AZURE_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
+          export AZURE_CLIENT_ID="$(AZURE_CLIENT_ID)"
+          export AZURE_CLIENT_SECRET="$(AZURE_CLIENT_SECRET)"
+          export AZURE_TENANT_ID="$(AZURE_TENANT_ID)"
+          inspec exec . -t azure:// --chef-license=accept --reporter cli junit:testresults.xml html:report.html json:output.json
+        workingDirectory: '$(Pipeline.Workspace)'
+
+    - task: Bash@3
+      displayName: "Upload inspec tests in Grafana"
+      inputs:
+        targetType: 'inline'
+        script: |
+          curl -F 'file=@output.json' -F 'platform=crossdvlup-inspec' http://51.144.172.239:5001/api/InspecResults/Upload
+        workingDirectory: '$(Pipeline.Workspace)'
+          
+    - task: PublishTestResults@2
+      displayName: Publish inspec test results
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/testresults.xml'
+        searchFolder: '$(Pipeline.Workspace)'
+        mergeTestResults: true
+        testRunTitle: 'Inspec tests'
+
+- stage: DeployApp
+  jobs:
+  - job: DeployApp
+    continueOnError: true
+    steps:
+    - task: DownloadPipelineArtifact@2
+      displayName: Download App build
+      inputs:
+        buildType: 'specific'
+        project: '2fa6f759-7af8-4edb-a93e-e3b06f5528f6'
+        definition: '32'
+        buildVersionToDownload: 'latest'
+        targetPath: '$(Pipeline.Workspace)'
+
+    - task: AzureRmWebAppDeployment@4
+      displayName: Deploy PasionPorLosBits App
+      inputs:
+        ConnectionType: 'AzureRM'
+        azureSubscription: 'RecetasDevops-Sub01(ca00e31b-ed34-48f8-9b4e-10847c74d493)'
+        appType: 'webApp'
+        WebAppName: 'pasiondebits'
+        packageForLinux: '$(Pipeline.Workspace)/**/*.zip'
+
+- stage: InspecTestsApps
+  jobs:
+  - job: InspecTests
+    continueOnError: true
+    steps:
+    - task: DownloadPipelineArtifact@2
+      displayName: Install Inspec
+      inputs:
+        buildType: 'current'
+        artifactName: 'inspec_app'
+        targetPath: '$(Pipeline.Workspace)'
+
+    - task: vsts-chef-task-install-inspec@1
+      displayName: "Install inspec"
+      inputs:
+        chefInstallScriptDownloadURLLinux: 'https://omnitruck.chef.io/install.sh'
+
+    - task: Bash@3
+      displayName: "Run inspec tests"
+      continueOnError: true
+      inputs:
+        targetType: 'inline'
+        script: |
+          export AZURE_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
+          export AZURE_CLIENT_ID="$(AZURE_CLIENT_ID)"
+          export AZURE_CLIENT_SECRET="$(AZURE_CLIENT_SECRET)"
+          export AZURE_TENANT_ID="$(AZURE_TENANT_ID)"
+          inspec exec . --chef-license=accept --reporter cli junit:testresults.xml html:report.html json:output.json
+        workingDirectory: '$(Pipeline.Workspace)'
+
+    - task: Bash@3
+      displayName: "Upload inspec tests in Grafana"
+      inputs:
+        targetType: 'inline'
+        script: |
+          curl -F 'file=@output.json' -F 'platform=crossdvlup-inspec-app' http://51.144.172.239:5001/api/InspecResults/Upload
+        workingDirectory: '$(Pipeline.Workspace)'
+          
+    - task: PublishTestResults@2
+      displayName: Publish inspec test results
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/testresults.xml'
+        searchFolder: '$(Pipeline.Workspace)'
+        mergeTestResults: true
+        testRunTitle: 'Inspec tests'
