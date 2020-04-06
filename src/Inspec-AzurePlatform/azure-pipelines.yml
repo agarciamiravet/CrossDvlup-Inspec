@@ -1,0 +1,56 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+     - group: Inspec
+
+stages:
+
+- stage: InspecTests
+  jobs:
+  - job: InspecTests
+    continueOnError: true
+    steps:
+    - task: vsts-chef-task-install-inspec@1
+      inputs:
+        chefInstallScriptDownloadURLLinux: 'https://omnitruck.chef.io/install.sh'
+
+    - task: Bash@3
+      displayName: "Run inspec tests"
+      continueOnError: true
+      inputs:
+        targetType: 'inline'
+        script: |
+          export AZURE_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
+          export AZURE_CLIENT_ID="$(AZURE_CLIENT_ID)"
+          export AZURE_CLIENT_SECRET="$(AZURE_CLIENT_SECRET)"
+          export AZURE_TENANT_ID="$(AZURE_TENANT_ID)"
+          inspec exec . -t azure:// --chef-license=accept --reporter cli junit:testresults.xml html:report.html json:output.json
+        workingDirectory: '$(Build.SourcesDirectory)/src/AzureAllPlatform'
+    
+    - task: Bash@3
+      displayName: "Upload inspec tests in Grafana"
+      inputs:
+        targetType: 'inline'
+        script: |
+          curl -F 'file=@output.json' -F 'platform=crossdvlup-inspec-platform' http://51.144.172.239:5001/api/InspecResults/Upload
+        workingDirectory: '$(Build.SourcesDirectory)/src/AzureAllPlatform'
+          
+    - task: PublishTestResults@2
+      displayName: Publish inspec test results
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/testresults.xml'
+        searchFolder: '$(Build.SourcesDirectory)/src/AzureAllPlatform'
+        mergeTestResults: true
+        testRunTitle: 'Inspec tests'
+    
